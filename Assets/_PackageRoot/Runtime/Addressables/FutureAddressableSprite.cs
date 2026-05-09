@@ -85,7 +85,18 @@ namespace Extensions.Unity.ImageLoader
             var sprite = handle.Result;
 
             // Associate handle with the sprite instance for later release.
-            s_handles[sprite] = handle;
+            // Guard: if the same Sprite reference somehow appears again, only release the old
+            // handle when it is genuinely different from the new one (avoids a double-release).
+            s_handles.AddOrUpdate(
+                sprite,
+                addValueFactory:    _           => handle,
+                updateValueFactory: (_, oldHandle) =>
+                {
+                    if (!oldHandle.Equals(handle))
+                        Addressables.Release(oldHandle);
+                    return handle;
+                });
+
 
             if (LogLevel.IsActive(DebugLevel.Log))
                 Debug.Log($"[ImageLoader] Future[id={Id}] Loaded Sprite via Addressables\n{Url}");

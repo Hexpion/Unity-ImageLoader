@@ -81,7 +81,18 @@ namespace Extensions.Unity.ImageLoader
             var texture = handle.Result;
 
             // Associate handle with the texture instance for later release.
-            s_handles[texture] = handle;
+            // Guard: if the same Texture2D reference somehow appears again, only release the old
+            // handle when it is genuinely different from the new one (avoids a double-release).
+            s_handles.AddOrUpdate(
+                texture,
+                addValueFactory:    _           => handle,
+                updateValueFactory: (_, oldHandle) =>
+                {
+                    if (!oldHandle.Equals(handle))
+                        Addressables.Release(oldHandle);
+                    return handle;
+                });
+
 
             if (LogLevel.IsActive(DebugLevel.Log))
                 Debug.Log($"[ImageLoader] Future[id={Id}] Loaded Texture2D via Addressables\n{Url}");

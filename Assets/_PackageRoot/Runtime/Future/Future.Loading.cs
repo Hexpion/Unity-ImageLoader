@@ -189,6 +189,7 @@ namespace Extensions.Unity.ImageLoader
                 {
                     if (LogLevel.IsActive(DebugLevel.Trace))
                         Debug.Log($"[ImageLoader] Future[id={Id}] Canceled UnityWebRequest for loading from Source\n{Url}");
+                    Cancel();
                 }
                 catch (Exception e)
                 {

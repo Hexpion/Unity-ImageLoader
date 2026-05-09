@@ -49,11 +49,10 @@ namespace Extensions.Unity.ImageLoader
                 ignoreImageNotFoundError: true, cancellationToken);
 
             // When the low-res arrives, push it as a placeholder on the full-res future.
+            // SetPlaceholder is internally guarded (checks `cleared || IsCancelled`) and is
+            // a no-op if the full-res future has already completed, so no external check is needed.
             lowResFuture.Loaded(lowResTexture =>
-            {
-                if (!future.IsCompleted && !future.IsCancelled)
-                    future.SetPlaceholder(lowResTexture, PlaceholderTrigger.LoadingFromSource);
-            });
+                future.SetPlaceholder(lowResTexture, PlaceholderTrigger.LoadingFromSource));
 
             // Dispose the low-res future once the full-res future reaches any terminal state.
             future.Completed(_ => lowResFuture.Dispose());
@@ -101,10 +100,7 @@ namespace Extensions.Unity.ImageLoader
                 ignoreImageNotFoundError: true, cancellationToken);
 
             lowResFuture.Loaded(lowResSprite =>
-            {
-                if (!future.IsCompleted && !future.IsCancelled)
-                    future.SetPlaceholder(lowResSprite, PlaceholderTrigger.LoadingFromSource);
-            });
+                future.SetPlaceholder(lowResSprite, PlaceholderTrigger.LoadingFromSource));
 
             future.Completed(_ => lowResFuture.Dispose());
 
