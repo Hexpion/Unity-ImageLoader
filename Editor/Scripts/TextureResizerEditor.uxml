@@ -1,0 +1,61 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements"
+         xsi:noNamespaceSchemaLocation="../../../UIElementsSchema/UIElements.xsd"
+         editor-extension-mode="True">
+
+  <ui:ScrollView name="root-scroll" class="il-root">
+
+    <!-- ═══════════════ SOURCE ═══════════════════════════════════════════ -->
+    <ui:Label text="Source" class="il-section-header" />
+
+    <ui:DropdownField label="Mode" name="mode-dropdown" class="il-field" />
+
+    <!-- ── Selected Textures panel ──────────────────────────────────────── -->
+    <ui:VisualElement name="selected-panel" class="il-panel">
+      <ui:Label text="Textures to process" class="il-panel-title" />
+      <ui:ListView name="asset-list" class="il-asset-list"
+                   show-border="true"
+                   selection-type="Multiple"
+                   virtualization-method="FixedHeight"
+                   item-height="24" />
+      <ui:VisualElement class="il-row il-button-row">
+        <ui:Button text="+ Add Selected" name="btn-add-selected" class="il-btn" />
+        <ui:Button text="✕ Clear All"    name="btn-clear"        class="il-btn il-btn-danger" />
+      </ui:VisualElement>
+    </ui:VisualElement>
+
+    <!-- ── Folder panel ─────────────────────────────────────────────────── -->
+    <ui:VisualElement name="folder-panel" class="il-panel">
+      <ui:Label text="Source Folder" class="il-panel-title" />
+      <ui:VisualElement class="il-row">
+        <ui:TextField name="folder-path" class="il-flex" />
+        <ui:Button text="Browse" name="btn-browse-folder" class="il-browse-btn" />
+      </ui:VisualElement>
+      <ui:Toggle label="Include subfolders" name="toggle-recursive" class="il-field" />
+    </ui:VisualElement>
+
+    <!-- ═══════════════ OUTPUT SETTINGS ══════════════════════════════════ -->
+    <ui:Label text="Output Settings" class="il-section-header" />
+
+    <ui:IntegerField label="Max Width"   value="128"     name="max-width"   class="il-field" />
+    <ui:IntegerField label="Max Height"  value="128"     name="max-height"  class="il-field" />
+    <ui:TextField    label="Name Suffix" value="_lowres" name="name-suffix" class="il-field" />
+
+    <ui:Toggle label="Save next to source" name="toggle-same-folder" value="true" class="il-field" />
+
+    <ui:VisualElement name="output-folder-row" class="il-row il-field">
+      <ui:TextField label="Output Folder" name="output-folder" class="il-flex" />
+      <ui:Button text="Browse" name="btn-browse-output" class="il-browse-btn" />
+    </ui:VisualElement>
+
+    <!-- ═══════════════ OPTIONS ══════════════════════════════════════════ -->
+    <ui:Label text="Options" class="il-section-header" />
+    <ui:Toggle label="Add 'ImageLoader_LowRes' label (Addressables)"
+               name="toggle-addressables-label" class="il-field" />
+
+    <!-- ═══════════════ ACTIONS ══════════════════════════════════════════ -->
+    <ui:Button text="Generate" name="btn-generate" class="il-generate-btn" />
+    <ui:Label  name="status-label" text="Ready." class="il-status" />
+
+  </ui:ScrollView>
+
+</ui:UXML>

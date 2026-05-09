@@ -172,39 +172,19 @@ namespace Extensions.Unity.ImageLoader
             if (LogLevel.IsActive(DebugLevel.Trace))
                 Debug.Log($"[ImageLoader] Future[id={Id}] Creating UnityWebRequest for loading from Source\n{Url}");
 
-            var finished = false;
-            UniTask.Post(async () =>
-            {
-                try
-                {
-                    if (IsCancelled || Status == FutureStatus.FailedToLoad) return;
+            // Ensure we are on the main thread — SendWebRequest() must be called there.
+            // SwitchToMainThread is a no-op when already on the main thread.
+            await UniTask.SwitchToMainThread(ct);
 
-                    var asyncOperation = SetWebRequest(CreateWebRequest(Url)).SendWebRequest();
-                    await UniTask.WaitUntil(() => asyncOperation.isDone || IsCancelled);
+            if (IsCancelled || Status == FutureStatus.FailedToLoad)
+                throw new OperationCanceledException(ct);
 
-                    if (LogLevel.IsActive(DebugLevel.Trace))
-                        Debug.Log($"[ImageLoader] Future[id={Id}] Completed UnityWebRequest for loading from Source\n{Url}");
-                }
-                catch (OperationCanceledException)
-                {
-                    if (LogLevel.IsActive(DebugLevel.Trace))
-                        Debug.Log($"[ImageLoader] Future[id={Id}] Canceled UnityWebRequest for loading from Source\n{Url}");
-                    Cancel();
-                }
-                catch (Exception e)
-                {
-                    if (LogLevel.IsActive(DebugLevel.Trace))
-                        Debug.Log($"[ImageLoader] Future[id={Id}] Exception in UnityWebRequest for loading from Source\n{Url}");
-                    if (LogLevel.IsActive(DebugLevel.Exception) && !ignoreImageNotFoundError)
-                        Debug.LogException(e);
-                }
-                finally
-                {
-                    finished = true;
-                }
-            });
+            var asyncOperation = SetWebRequest(CreateWebRequest(Url)).SendWebRequest();
 
-            await UniTask.WaitUntil(() => finished);
+            await UniTask.WaitUntil(() => asyncOperation.isDone || IsCancelled);
+
+            if (LogLevel.IsActive(DebugLevel.Trace))
+                Debug.Log($"[ImageLoader] Future[id={Id}] Completed UnityWebRequest for loading from Source\n{Url}");
 
             if (IsCancelled)
                 throw new OperationCanceledException(ct);
@@ -229,8 +209,8 @@ namespace Extensions.Unity.ImageLoader
             if (LogLevel.IsActive(DebugLevel.Log))
                 Debug.Log($"[ImageLoader] Future[id={Id}] Loaded from Source. Processing...\n{Url}");
 
-            var rawBytes     = WebRequest.downloadHandler.data;
-            var parsedValue  = ParseWebRequest(WebRequest);
+            var rawBytes    = WebRequest.downloadHandler.data;
+            var parsedValue = ParseWebRequest(WebRequest);
             return new LoadResult<T>(parsedValue, rawBytes);
         }
 

@@ -87,12 +87,20 @@ namespace Extensions.Unity.ImageLoader
             UseMemoryCache = ImageLoader.settings.useMemoryCache;
             timeout = ImageLoader.settings.timeout;
             LogLevel = logLevel ?? ImageLoader.settings.debugLevel;
-            cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+            // Avoid the heavier CreateLinkedTokenSource path when no external token is supplied.
+            if (cancellationToken.CanBeCanceled)
+            {
+                cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cancellationToken.Register(Cancel);
+            }
+            else
+            {
+                cts = new CancellationTokenSource();
+            }
 
             if (LogLevel.IsActive(DebugLevel.Trace))
                 Debug.Log($"[ImageLoader] Future[id={Id}] Created future ({typeof(T).Name})\n{url}");
-
-            cancellationToken.Register(Cancel);
         }
         ~Future() => Dispose();
 

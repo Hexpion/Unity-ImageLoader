@@ -1,45 +1,51 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace Extensions.Unity.ImageLoader.Editor
 {
     /// <summary>
-    /// Editor window that generates low-resolution PNG versions of selected <see cref="Texture2D"/>
-    /// assets.  Access it via <b>Assets → ImageLoader → Generate Low-Res Version</b> from the
-    /// Project window context menu.
+    /// Low-resolution texture generator built with UI Toolkit (UIElements).
+    /// <para>Open via <b>Assets → ImageLoader → Generate Low-Res Version</b> (right-click
+    /// on textures in the Project window) or <b>Tools → ImageLoader → Low-Res Generator</b>.</para>
     /// </summary>
     public class TextureResizerEditorWindow : EditorWindow
     {
-        private int    targetWidth          = 128;
-        private int    targetHeight         = 128;
-        private string outputFolder         = "";
-        private string namingSuffix         = "_lowres";
-        private bool   addAddressablesLabel = false;
+        // ── Persistent state ──────────────────────────────────────────────
+        private readonly List<Texture2D> _assets = new List<Texture2D>();
+        private int    _maxWidth          = 128;
+        private int    _maxHeight         = 128;
+        private string _namingSuffix      = "_lowres";
+        private string _outputFolder      = "";
+        private string _folderPath        = "";
+        private bool   _sameAsSource      = true;
+        private bool   _recursive         = false;
+        private bool   _addAddressLabel   = false;
+        private int    _mode              = 0; // 0 = Selected Textures, 1 = Folder
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ── UIElements references ─────────────────────────────────────────
+        private ListView    _assetList;
+        private Label       _statusLabel;
+        private VisualElement _selectedPanel;
+        private VisualElement _folderPanel;
+        private VisualElement _outputFolderRow;
+
+        // ─────────────────────────────────────────────────────────────────
 
         [MenuItem("Assets/ImageLoader/Generate Low-Res Version")]
-        private static void ShowWindow()
+        private static void ShowFromContextMenu()
         {
-            var window = GetWindow<TextureResizerEditorWindow>("Generate Low-Res Textures");
-            window.minSize = new Vector2(340, 240);
-
-            // Pre-fill output folder from the first selected texture.
-            var selected = Selection.activeObject as Texture2D;
-            if (selected != null)
-            {
-                var dir = Path.GetDirectoryName(AssetDatabase.GetAssetPath(selected));
-                if (!string.IsNullOrEmpty(dir))
-                    window.outputFolder = dir.Replace('\\', '/');
-            }
-
+            var window = GetWindow<TextureResizerEditorWindow>("Low-Res Generator");
+            window.minSize = new Vector2(380, 500);
+            window.PopulateFromSelection();
             window.Show();
         }
 
         [MenuItem("Assets/ImageLoader/Generate Low-Res Version", validate = true)]
-        private static bool ValidateShowWindow()
+        private static bool ValidateContextMenu()
         {
             foreach (var obj in Selection.objects)
                 if (obj is Texture2D)
@@ -47,137 +53,419 @@ namespace Extensions.Unity.ImageLoader.Editor
             return false;
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
-
-        private void OnGUI()
+        [MenuItem("Tools/ImageLoader/Low-Res Generator")]
+        private static void ShowFromMenu()
         {
-            GUILayout.Label("Low-Res Texture Generator", EditorStyles.boldLabel);
-            EditorGUILayout.Space();
+            var window = GetWindow<TextureResizerEditorWindow>("Low-Res Generator");
+            window.minSize = new Vector2(380, 500);
+            window.Show();
+        }
 
-            targetWidth  = EditorGUILayout.IntField("Max Width",   targetWidth);
-            targetHeight = EditorGUILayout.IntField("Max Height",  targetHeight);
-            namingSuffix = EditorGUILayout.TextField("Name Suffix", namingSuffix);
+        // ─────────────────────────────────────────────────────────────────
 
-            EditorGUILayout.Space();
-            GUILayout.Label("Output Folder (relative to project root)");
-            EditorGUILayout.BeginHorizontal();
-            outputFolder = EditorGUILayout.TextField(outputFolder);
-            if (GUILayout.Button("Browse", GUILayout.Width(64)))
+        private void PopulateFromSelection()
+        {
+            foreach (var obj in Selection.objects)
+                if (obj is Texture2D tex && !_assets.Contains(tex))
+                    _assets.Add(tex);
+
+            if (_assets.Count > 0 && _sameAsSource)
             {
-                var chosen = EditorUtility.OpenFolderPanel("Select Output Folder", "Assets", "");
+                var firstPath = AssetDatabase.GetAssetPath(_assets[0]);
+                if (!string.IsNullOrEmpty(firstPath))
+                    _outputFolder = Path.GetDirectoryName(firstPath).Replace('\\', '/');
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+
+        public void CreateGUI()
+        {
+            var editorFolder = FindEditorScriptsFolder();
+
+            // Load UXML
+            var uxml = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>($"{editorFolder}/TextureResizerEditor.uxml");
+            if (uxml == null)
+            {
+                rootVisualElement.Add(new Label("[ImageLoader] Could not load TextureResizerEditor.uxml"));
+                return;
+            }
+            uxml.CloneTree(rootVisualElement);
+
+            // Load USS
+            var uss = AssetDatabase.LoadAssetAtPath<StyleSheet>($"{editorFolder}/TextureResizerEditor.uss");
+            if (uss != null)
+                rootVisualElement.styleSheets.Add(uss);
+
+            BindUI();
+        }
+
+        private void BindUI()
+        {
+            // ── Mode dropdown ──────────────────────────────────────────────
+            var modeDropdown = rootVisualElement.Q<DropdownField>("mode-dropdown");
+            modeDropdown.choices = new List<string> { "Selected Textures", "Folder" };
+            modeDropdown.index   = _mode;
+            modeDropdown.RegisterValueChangedCallback(evt =>
+            {
+                _mode = modeDropdown.index;
+                RefreshPanels();
+            });
+
+            // ── Panels ────────────────────────────────────────────────────
+            _selectedPanel   = rootVisualElement.Q<VisualElement>("selected-panel");
+            _folderPanel     = rootVisualElement.Q<VisualElement>("folder-panel");
+            _outputFolderRow = rootVisualElement.Q<VisualElement>("output-folder-row");
+
+            // ── Asset list ─────────────────────────────────────────────────
+            _assetList = rootVisualElement.Q<ListView>("asset-list");
+            _assetList.itemsSource  = _assets;
+            _assetList.makeItem     = MakeListRow;
+            _assetList.bindItem     = BindListRow;
+            _assetList.selectionType = SelectionType.None;
+
+            // ── Selected panel buttons ─────────────────────────────────────
+            rootVisualElement.Q<Button>("btn-add-selected").clicked += OnAddSelected;
+            rootVisualElement.Q<Button>("btn-clear").clicked        += OnClearAssets;
+
+            // ── Folder panel ───────────────────────────────────────────────
+            var folderPathField = rootVisualElement.Q<TextField>("folder-path");
+            folderPathField.value = _folderPath;
+            folderPathField.RegisterValueChangedCallback(evt => _folderPath = evt.newValue);
+
+            rootVisualElement.Q<Button>("btn-browse-folder").clicked += () =>
+            {
+                var chosen = EditorUtility.OpenFolderPanel("Source Folder", "Assets", "");
                 if (!string.IsNullOrEmpty(chosen))
                 {
-                    var dataPath = Application.dataPath;
-                    if (chosen.StartsWith(dataPath))
-                        outputFolder = ("Assets" + chosen.Substring(dataPath.Length)).Replace('\\', '/');
-                    else
-                        outputFolder = chosen;
+                    _folderPath = ToRelativePath(chosen);
+                    folderPathField.SetValueWithoutNotify(_folderPath);
                 }
-            }
-            EditorGUILayout.EndHorizontal();
+            };
 
-            EditorGUILayout.Space();
-            addAddressablesLabel = EditorGUILayout.Toggle(
-                new GUIContent("Add 'ImageLoader_LowRes' label",
-                               "Marks generated textures with the 'ImageLoader_LowRes' asset label " +
-                               "for easy grouping in Addressables."),
-                addAddressablesLabel);
+            var toggleRecursive = rootVisualElement.Q<Toggle>("toggle-recursive");
+            toggleRecursive.value = _recursive;
+            toggleRecursive.RegisterValueChangedCallback(evt => _recursive = evt.newValue);
 
-            EditorGUILayout.Space();
-            using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(outputFolder)))
+            // ── Output settings ────────────────────────────────────────────
+            var widthField = rootVisualElement.Q<IntegerField>("max-width");
+            widthField.value = _maxWidth;
+            widthField.RegisterValueChangedCallback(evt => _maxWidth = Mathf.Max(1, evt.newValue));
+
+            var heightField = rootVisualElement.Q<IntegerField>("max-height");
+            heightField.value = _maxHeight;
+            heightField.RegisterValueChangedCallback(evt => _maxHeight = Mathf.Max(1, evt.newValue));
+
+            var suffixField = rootVisualElement.Q<TextField>("name-suffix");
+            suffixField.value = _namingSuffix;
+            suffixField.RegisterValueChangedCallback(evt => _namingSuffix = evt.newValue);
+
+            // ── Same-folder toggle ─────────────────────────────────────────
+            var sameToggle = rootVisualElement.Q<Toggle>("toggle-same-folder");
+            sameToggle.value = _sameAsSource;
+            sameToggle.RegisterValueChangedCallback(evt =>
             {
-                if (GUILayout.Button("Generate"))
-                    GenerateForSelection();
-            }
+                _sameAsSource = evt.newValue;
+                _outputFolderRow.style.display = _sameAsSource ? DisplayStyle.None : DisplayStyle.Flex;
+            });
 
-            if (string.IsNullOrWhiteSpace(outputFolder))
-                EditorGUILayout.HelpBox("Please specify an output folder.", MessageType.Warning);
+            // ── Output folder ──────────────────────────────────────────────
+            var outputFolderField = rootVisualElement.Q<TextField>("output-folder");
+            outputFolderField.value = _outputFolder;
+            outputFolderField.RegisterValueChangedCallback(evt => _outputFolder = evt.newValue);
+
+            rootVisualElement.Q<Button>("btn-browse-output").clicked += () =>
+            {
+                var chosen = EditorUtility.OpenFolderPanel("Output Folder", "Assets", "");
+                if (!string.IsNullOrEmpty(chosen))
+                {
+                    _outputFolder = ToRelativePath(chosen);
+                    outputFolderField.SetValueWithoutNotify(_outputFolder);
+                }
+            };
+
+            // ── Options ────────────────────────────────────────────────────
+            var labelToggle = rootVisualElement.Q<Toggle>("toggle-addressables-label");
+            labelToggle.value = _addAddressLabel;
+            labelToggle.RegisterValueChangedCallback(evt => _addAddressLabel = evt.newValue);
+
+            // ── Generate ───────────────────────────────────────────────────
+            rootVisualElement.Q<Button>("btn-generate").clicked += OnGenerate;
+
+            // ── Status label ───────────────────────────────────────────────
+            _statusLabel = rootVisualElement.Q<Label>("status-label");
+
+            // ── Initial visibility ─────────────────────────────────────────
+            _outputFolderRow.style.display = _sameAsSource ? DisplayStyle.None : DisplayStyle.Flex;
+            RefreshPanels();
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
+        // ─── List row factory ─────────────────────────────────────────────
 
-        private void GenerateForSelection()
+        private VisualElement MakeListRow()
         {
-            int count   = 0;
-            int skipped = 0;
+            var row = new VisualElement();
+            row.AddToClassList("il-list-row");
 
+            var icon = new Image();
+            icon.AddToClassList("il-list-icon");
+
+            var label = new Label();
+            label.AddToClassList("il-list-label");
+
+            var removeBtn = new Button();
+            removeBtn.AddToClassList("il-list-remove");
+            removeBtn.text = "✕";
+
+            row.Add(icon);
+            row.Add(label);
+            row.Add(removeBtn);
+            return row;
+        }
+
+        private void BindListRow(VisualElement element, int index)
+        {
+            var tex = _assets[index];
+
+            element.Q<Image>().image = AssetDatabase.GetCachedIcon(AssetDatabase.GetAssetPath(tex));
+
+            var lbl = element.Q<Label>();
+            lbl.text    = tex ? tex.name : "(missing)";
+            lbl.tooltip = tex ? AssetDatabase.GetAssetPath(tex) : "";
+
+            var btn = element.Q<Button>();
+            // Remove old click handlers before binding.
+            btn.clicked -= DummyHandler;
+            btn.clicked += () => RemoveAssetAt(index);
+        }
+
+        // clicked only accepts Action; we need a stable placeholder to remove the previous lambda.
+        private static readonly System.Action DummyHandler = () => { };
+
+        private void RemoveAssetAt(int index)
+        {
+            if (index >= 0 && index < _assets.Count)
+            {
+                _assets.RemoveAt(index);
+                _assetList.Rebuild();
+                SetStatus($"{_assets.Count} texture(s) in list.");
+            }
+        }
+
+        // ─── Button handlers ──────────────────────────────────────────────
+
+        private void OnAddSelected()
+        {
+            var added = 0;
             foreach (var obj in Selection.objects)
             {
-                if (!(obj is Texture2D)) continue;
-
-                var sourcePath = AssetDatabase.GetAssetPath(obj);
-                var absSource  = Path.Combine(Directory.GetCurrentDirectory(), sourcePath);
-
-                if (!File.Exists(absSource))
+                if (obj is Texture2D tex && !_assets.Contains(tex))
                 {
-                    Debug.LogWarning($"[ImageLoader] TextureResizer: source file not found at '{absSource}'. Skipping.");
-                    skipped++;
-                    continue;
+                    _assets.Add(tex);
+                    added++;
                 }
-
-                var sourceBytes = File.ReadAllBytes(absSource);
-                var resizedPng  = TextureResizer.ResizeBytes(sourceBytes, targetWidth, targetHeight);
-
-                if (resizedPng == null)
-                {
-                    Debug.LogWarning($"[ImageLoader] TextureResizer: could not resize '{sourcePath}'. Skipping.");
-                    skipped++;
-                    continue;
-                }
-
-                var outFileName = Path.GetFileNameWithoutExtension(sourcePath) + namingSuffix + ".png";
-                var outRelPath  = Path.Combine(outputFolder, outFileName).Replace('\\', '/');
-                var outAbsPath  = Path.Combine(Directory.GetCurrentDirectory(), outRelPath);
-
-                Directory.CreateDirectory(Path.GetDirectoryName(outAbsPath));
-                File.WriteAllBytes(outAbsPath, resizedPng);
-                AssetDatabase.ImportAsset(outRelPath, ImportAssetOptions.ForceUpdate);
-
-                if (addAddressablesLabel)
-                    AddLabel(outRelPath, "ImageLoader_LowRes");
-
-                Debug.Log($"[ImageLoader] Generated low-res texture: {outRelPath}");
-                count++;
             }
-
-            AssetDatabase.Refresh();
-
-            var msg = count > 0
-                ? $"Generated {count} low-res texture(s)."
-                : "No textures were generated.";
-            if (skipped > 0)
-                msg += $"\n{skipped} asset(s) were skipped (see Console for details).";
-
-            EditorUtility.DisplayDialog("Done", msg, "OK");
+            if (added > 0)
+            {
+                _assetList.Rebuild();
+                SetStatus($"Added {added} texture(s). Total: {_assets.Count}.");
+            }
+            else
+            {
+                SetStatus("No new textures found in selection.");
+            }
         }
 
-        private static void AddLabel(string assetPath, string label)
+        private void OnClearAssets()
+        {
+            _assets.Clear();
+            _assetList.Rebuild();
+            SetStatus("List cleared.");
+        }
+
+        private void OnGenerate()
+        {
+            if (_mode == 0)
+                GenerateForSelectedAssets();
+            else
+                GenerateForFolder();
+        }
+
+        // ─── Generation ───────────────────────────────────────────────────
+
+        private void GenerateForSelectedAssets()
+        {
+            if (_assets.Count == 0)
+            {
+                SetStatus("No textures in the list.");
+                return;
+            }
+
+            int ok = 0, skipped = 0;
+            for (var i = 0; i < _assets.Count; i++)
+            {
+                var tex = _assets[i];
+                if (!tex) { skipped++; continue; }
+
+                var dest = _sameAsSource
+                    ? Path.GetDirectoryName(AssetDatabase.GetAssetPath(tex)).Replace('\\', '/')
+                    : _outputFolder;
+
+                if (ProcessTexture(tex, dest))
+                    ok++;
+                else
+                    skipped++;
+            }
+
+            Finish(ok, skipped);
+        }
+
+        private void GenerateForFolder()
+        {
+            if (string.IsNullOrWhiteSpace(_folderPath))
+            {
+                SetStatus("Please specify a source folder.");
+                return;
+            }
+
+            var searchOpt = _recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            var guids     = AssetDatabase.FindAssets("t:Texture2D", new[] { _folderPath });
+
+            if (guids.Length == 0)
+            {
+                SetStatus($"No textures found in '{_folderPath}'.");
+                return;
+            }
+
+            int ok = 0, skipped = 0;
+            foreach (var guid in guids)
+            {
+                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                var tex       = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
+                if (!tex) { skipped++; continue; }
+
+                // If recursive is off, skip textures in subdirectories.
+                if (!_recursive && Path.GetDirectoryName(assetPath).Replace('\\', '/') != _folderPath.TrimEnd('/'))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var dest = _sameAsSource
+                    ? Path.GetDirectoryName(assetPath).Replace('\\', '/')
+                    : _outputFolder;
+
+                if (ProcessTexture(tex, dest))
+                    ok++;
+                else
+                    skipped++;
+            }
+
+            Finish(ok, skipped);
+        }
+
+        private bool ProcessTexture(Texture2D tex, string outputFolder)
+        {
+            if (string.IsNullOrWhiteSpace(outputFolder))
+            {
+                Debug.LogWarning($"[ImageLoader] TextureResizer: no output folder specified for '{tex.name}'. Skipping.");
+                return false;
+            }
+
+            var sourcePath = AssetDatabase.GetAssetPath(tex);
+            var absSource  = Path.GetFullPath(sourcePath);
+
+            if (!File.Exists(absSource))
+            {
+                Debug.LogWarning($"[ImageLoader] TextureResizer: source not found at '{absSource}'. Skipping.");
+                return false;
+            }
+
+            var sourceBytes = File.ReadAllBytes(absSource);
+            var resizedPng  = TextureResizer.ResizeBytes(sourceBytes, _maxWidth, _maxHeight);
+
+            if (resizedPng == null)
+            {
+                Debug.LogWarning($"[ImageLoader] TextureResizer: could not resize '{sourcePath}' (unsupported format or corrupt data). Skipping.");
+                return false;
+            }
+
+            var outFileName = Path.GetFileNameWithoutExtension(sourcePath) + _namingSuffix + ".png";
+            var outRelPath  = (outputFolder.TrimEnd('/') + "/" + outFileName);
+            var outAbsPath  = Path.GetFullPath(outRelPath);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(outAbsPath));
+            File.WriteAllBytes(outAbsPath, resizedPng);
+            AssetDatabase.ImportAsset(outRelPath, ImportAssetOptions.ForceUpdate);
+
+            if (_addAddressLabel)
+                AddAssetLabel(outRelPath, "ImageLoader_LowRes");
+
+            Debug.Log($"[ImageLoader] Generated low-res: {outRelPath}");
+            return true;
+        }
+
+        private void Finish(int ok, int skipped)
+        {
+            AssetDatabase.Refresh();
+            var msg = ok > 0 ? $"Generated {ok} texture(s)." : "No textures were generated.";
+            if (skipped > 0) msg += $" {skipped} skipped (see Console).";
+            SetStatus(msg);
+            if (ok > 0)
+                EditorUtility.DisplayDialog("Done", msg, "OK");
+        }
+
+        // ─── Helpers ──────────────────────────────────────────────────────
+
+        private void RefreshPanels()
+        {
+            _selectedPanel.style.display = _mode == 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            _folderPanel.style.display   = _mode == 1 ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
+        private void SetStatus(string text) => _statusLabel.text = text;
+
+        private static void AddAssetLabel(string assetPath, string label)
         {
             var asset = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
             if (asset == null) return;
-
-            var existing = AssetDatabase.GetLabels(asset);
-            var labels   = new List<string>(existing);
+            var labels = new List<string>(AssetDatabase.GetLabels(asset));
             if (!labels.Contains(label))
             {
                 labels.Add(label);
                 AssetDatabase.SetLabels(asset, labels.ToArray());
             }
         }
-    }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Provides a batch-generation tool accessible from the top menu:
-    /// <b>Tools → ImageLoader → Batch Generate Low-Res Textures</b>.
-    /// </summary>
-    public static class TextureResizerBatchMenu
-    {
-        [MenuItem("Tools/ImageLoader/Batch Generate Low-Res Textures")]
-        private static void ShowBatchWindow()
+        private static string ToRelativePath(string absPath)
         {
-            EditorWindow.GetWindow<TextureResizerEditorWindow>("Batch Low-Res Generator").Show();
+            var dataPath = Application.dataPath;
+            return absPath.StartsWith(dataPath)
+                ? ("Assets" + absPath.Substring(dataPath.Length)).Replace('\\', '/')
+                : absPath.Replace('\\', '/');
+        }
+
+        private static string FindEditorScriptsFolder()
+        {
+            var guids = AssetDatabase.FindAssets("TextureResizerEditor t:MonoScript");
+            foreach (var guid in guids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (path.EndsWith("TextureResizerEditor.cs"))
+                    return Path.GetDirectoryName(path).Replace('\\', '/');
+            }
+            return "Assets/Editor/Scripts";
         }
     }
+
+    // ─── Top-level menu entry ─────────────────────────────────────────────────
+
+    /// <summary>Provides the Tools menu shortcut for the Low-Res Generator window.</summary>
+    public static class TextureResizerBatchMenu
+    {
+        [MenuItem("Tools/ImageLoader/Low-Res Generator")]
+        private static void ShowWindow()
+            => EditorWindow.GetWindow<TextureResizerEditorWindow>("Low-Res Generator").Show();
+    }
 }
+
