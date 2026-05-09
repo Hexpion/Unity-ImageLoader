@@ -1,0 +1,145 @@
+/* ── Root ─────────────────────────────────────────────────────────────── */
+.il-root {
+    padding: 8px;
+}
+
+/* ── Section headers ──────────────────────────────────────────────────── */
+.il-section-header {
+    -unity-font-style: bold;
+    font-size: 12px;
+    margin-top: 12px;
+    margin-bottom: 4px;
+    padding-bottom: 3px;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Generic field spacing ────────────────────────────────────────────── */
+.il-field {
+    margin-bottom: 4px;
+}
+
+/* ── Grouped panels ───────────────────────────────────────────────────── */
+.il-panel {
+    border-width: 1px;
+    border-color: rgba(0, 0, 0, 0.18);
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 6px;
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.il-panel-title {
+    -unity-font-style: bold;
+    font-size: 11px;
+    margin-bottom: 6px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+/* ── Row helpers ──────────────────────────────────────────────────────── */
+.il-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.il-button-row {
+    margin-top: 4px;
+    flex-direction: row;
+    align-items: center;
+}
+
+/* ── Asset list ────────────────────────────────────────────────────────── */
+.il-asset-list {
+    min-height: 100px;
+    max-height: 220px;
+    margin-bottom: 4px;
+    border-radius: 3px;
+}
+
+/* ── Flex helpers ─────────────────────────────────────────────────────── */
+.il-flex {
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.il-btn {
+    flex-shrink: 0;
+    margin-right: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.il-btn-danger {
+    color: rgb(220, 80, 80);
+}
+
+.il-browse-btn {
+    flex-shrink: 0;
+    width: 64px;
+    margin-left: 4px;
+}
+
+/* ── Generate button ──────────────────────────────────────────────────── */
+.il-generate-btn {
+    margin-top: 14px;
+    height: 34px;
+    border-radius: 4px;
+    font-size: 13px;
+    -unity-font-style: bold;
+    background-color: rgb(46, 110, 46);
+    color: rgb(230, 255, 230);
+    border-color: rgb(30, 80, 30);
+}
+
+.il-generate-btn:hover {
+    background-color: rgb(55, 130, 55);
+}
+
+.il-generate-btn:disabled {
+    background-color: rgba(60, 60, 60, 0.5);
+    color: rgba(200, 200, 200, 0.4);
+}
+
+/* ── Status label ─────────────────────────────────────────────────────── */
+.il-status {
+    margin-top: 6px;
+    font-size: 11px;
+    color: rgba(200, 200, 200, 0.65);
+    white-space: normal;
+}
+
+/* ── List-view row ────────────────────────────────────────────────────── */
+.il-list-row {
+    flex-direction: row;
+    align-items: center;
+    padding-left: 4px;
+    padding-right: 4px;
+    height: 24px;
+}
+
+.il-list-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
+.il-list-label {
+    flex-grow: 1;
+    flex-shrink: 1;
+    overflow: hidden;
+    -unity-text-overflow-position: end;
+    text-overflow: ellipsis;
+}
+
+.il-list-remove {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+    padding: 0;
+    border-radius: 2px;
+    margin-left: 4px;
+    color: rgb(200, 80, 80);
+}
