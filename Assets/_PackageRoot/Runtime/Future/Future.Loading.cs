@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 
@@ -109,20 +110,76 @@ namespace Extensions.Unity.ImageLoader
 
             ((IFutureInternal<T>)this).Loading(FutureLoadingFrom.Source);
 
+            try
+            {
+                var result = await LoadFromSourceAsync(ignoreImageNotFoundError, cts.Token);
+
+                if (IsCancelled || Status == FutureStatus.FailedToLoad)
+                {
+                    RemoveLoading(); // LOADING REMOVED
+                    return;
+                }
+
+                if (UseDiskCache && result.RawBytes != null && result.RawBytes.Length > 0)
+                    await SaveDiskAsync(result.RawBytes);
+
+                if (IsCancelled || Status == FutureStatus.FailedToLoad)
+                {
+                    RemoveLoading(); // LOADING REMOVED
+                    return;
+                }
+
+                if (LogLevel.IsActive(DebugLevel.Trace))
+                    Debug.Log($"[ImageLoader] Future[id={Id}] Processing source response\n{Url}");
+
+                if (UseMemoryCache)
+                    SaveToMemoryCache(result.Value, replace: true);
+                RemoveLoading(); // LOADING REMOVED
+
+                ((IFutureInternal<T>)this).SetLoaded(result.Value, FutureLoadedFrom.Source);
+            }
+            catch (OperationCanceledException)
+            {
+                RemoveLoading(); // LOADING REMOVED
+                Cancel();
+            }
+            catch (Exception e)
+            {
+                if (LogLevel.IsActive(DebugLevel.Exception) && !ignoreImageNotFoundError)
+                    Debug.LogException(e);
+                RemoveLoading(); // LOADING REMOVED
+                ((IFutureInternal<T>)this).FailToLoad(e);
+            }
+        }
+
+        /// <summary>
+        /// Load the asset from its primary source and return the result.
+        /// <para>
+        /// The default implementation uses <see cref="UnityEngine.Networking.UnityWebRequest"/>.
+        /// Override in subclasses to provide an alternative source strategy (e.g. Unity Addressables).
+        /// </para>
+        /// <para>
+        /// Throw <see cref="OperationCanceledException"/> on cancellation, or any other
+        /// <see cref="Exception"/> on failure. On success return a <see cref="LoadResult{T}"/>
+        /// carrying the parsed value and optional raw bytes for disk-caching.
+        /// </para>
+        /// </summary>
+        protected virtual async UniTask<LoadResult<T>> LoadFromSourceAsync(bool ignoreImageNotFoundError, CancellationToken ct)
+        {
+            if (IsCancelled || Status == FutureStatus.FailedToLoad)
+                throw new OperationCanceledException(ct);
+
+            if (LogLevel.IsActive(DebugLevel.Trace))
+                Debug.Log($"[ImageLoader] Future[id={Id}] Creating UnityWebRequest for loading from Source\n{Url}");
+
             var finished = false;
             UniTask.Post(async () =>
             {
                 try
                 {
-                    if (IsCancelled || Status == FutureStatus.FailedToLoad)
-                        return;
+                    if (IsCancelled || Status == FutureStatus.FailedToLoad) return;
 
-                    if (LogLevel.IsActive(DebugLevel.Trace))
-                        Debug.Log($"[ImageLoader] Future[id={Id}] Creating UnityWebRequest for loading from Source\n{Url}");
-
-                    var asyncOperation = SetWebRequest(CreateWebRequest(Url))
-                        .SendWebRequest();
-
+                    var asyncOperation = SetWebRequest(CreateWebRequest(Url)).SendWebRequest();
                     await UniTask.WaitUntil(() => asyncOperation.isDone || IsCancelled);
 
                     if (LogLevel.IsActive(DebugLevel.Trace))
@@ -132,20 +189,11 @@ namespace Extensions.Unity.ImageLoader
                 {
                     if (LogLevel.IsActive(DebugLevel.Trace))
                         Debug.Log($"[ImageLoader] Future[id={Id}] Canceled UnityWebRequest for loading from Source\n{Url}");
-                    Cancel();
-                }
-                catch (TimeoutException e)
-                {
-                    if (LogLevel.IsActive(DebugLevel.Trace))
-                        Debug.Log($"[ImageLoader] Future[id={Id}] Timeout of UnityWebRequest for loading from Source\n{Url}");
-                    RemoveLoading(); // LOADING REMOVED
-                    ((IFutureInternal<T>)this).FailToLoad(e);
                 }
                 catch (Exception e)
                 {
                     if (LogLevel.IsActive(DebugLevel.Trace))
                         Debug.Log($"[ImageLoader] Future[id={Id}] Exception in UnityWebRequest for loading from Source\n{Url}");
-
                     if (LogLevel.IsActive(DebugLevel.Exception) && !ignoreImageNotFoundError)
                         Debug.LogException(e);
                 }
@@ -155,28 +203,13 @@ namespace Extensions.Unity.ImageLoader
                 }
             });
 
-            try
-            {
-                await UniTask.WaitUntil(() => finished);
-                if (IsCancelled || Status == FutureStatus.FailedToLoad)
-                {
-                    RemoveLoading(); // LOADING REMOVED
-                    return;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                RemoveLoading(); // LOADING REMOVED
-                Cancel();
-                return;
-            }
+            await UniTask.WaitUntil(() => finished);
+
+            if (IsCancelled)
+                throw new OperationCanceledException(ct);
 
             if (WebRequest == null)
-            {
-                RemoveLoading(); // LOADING REMOVED
-                ((IFutureInternal<T>)this).FailToLoad(new Exception($"[ImageLoader] Future[id={Id}] UnityWebRequest is null. URL={Url}"));
-                return;
-            }
+                throw new Exception($"[ImageLoader] Future[id={Id}] UnityWebRequest is null. URL={Url}");
 
 #if UNITY_2020_1_OR_NEWER
             var isError = WebRequest.result != UnityEngine.Networking.UnityWebRequest.Result.Success;
@@ -186,35 +219,18 @@ namespace Extensions.Unity.ImageLoader
             if (isError)
             {
 #if UNITY_2020_1_OR_NEWER
-                var errorMessage = $"[ImageLoader] Future[id={Id}] {WebRequest.result} {WebRequest.error}. URL={Url}";
+                throw new Exception($"[ImageLoader] Future[id={Id}] {WebRequest.result} {WebRequest.error}. URL={Url}");
 #else
-                var errorMessage = $"[ImageLoader] Future[id={Id}] {WebRequest.error}. URL={Url}";
+                throw new Exception($"[ImageLoader] Future[id={Id}] {WebRequest.error}. URL={Url}");
 #endif
-                RemoveLoading(); // LOADING REMOVED
-                ((IFutureInternal<T>)this).FailToLoad(new Exception(errorMessage));
-                return;
             }
 
             if (LogLevel.IsActive(DebugLevel.Log))
                 Debug.Log($"[ImageLoader] Future[id={Id}] Loaded from Source. Processing...\n{Url}");
 
-            if (UseDiskCache)
-                await SaveDiskAsync(WebRequest.downloadHandler.data);
-
-            if (IsCancelled || Status == FutureStatus.FailedToLoad)
-            {
-                RemoveLoading(); // LOADING REMOVED
-                return;
-            }
-            if (LogLevel.IsActive(DebugLevel.Trace))
-                Debug.Log($"[ImageLoader] Future[id={Id}] Parsing UnityWebRequest response\n{Url}");
-            var downloadedObj = ParseWebRequest(WebRequest);
-
-            if (UseMemoryCache)
-                SaveToMemoryCache(downloadedObj, replace: true);
-            RemoveLoading(); // LOADING REMOVED
-
-            ((IFutureInternal<T>)this).SetLoaded(downloadedObj, FutureLoadedFrom.Source);
+            var rawBytes     = WebRequest.downloadHandler.data;
+            var parsedValue  = ParseWebRequest(WebRequest);
+            return new LoadResult<T>(parsedValue, rawBytes);
         }
 
         protected virtual bool RegisterLoading(out Future<T> anotherLoadingFuture)
@@ -222,3 +238,4 @@ namespace Extensions.Unity.ImageLoader
         protected virtual void RemoveLoading() => RemoveLoading(Url);
     }
 }
+

@@ -1,0 +1,27 @@
+{
+    "name": "Extensions.Unity.ImageLoader.Addressables",
+    "rootNamespace": "Extensions.Unity.ImageLoader",
+    "references": [
+        "Extensions.Unity.ImageLoader",
+        "Unity.Addressables",
+        "Unity.ResourceManager",
+        "UniTask"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "ADDRESSABLES"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.addressables",
+            "expression": "1.0.0",
+            "define": "ADDRESSABLES"
+        }
+    ],
+    "noEngineReferences": false
+}
